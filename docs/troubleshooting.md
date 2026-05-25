@@ -25,11 +25,26 @@ chmod +x /etc/openhab/scripts/*.sh
 
 ## Script logs "WARN: <date> not in CSV, using last available row"
 
-This is **expected behaviour**, not a bug. The MeteoSwiss CSV is updated around 02:00 CET. If the rule runs before the CSV catches up, or if MeteoSwiss has a delay, the script falls back to the most recent available row.
+This is **expected behaviour**, not a bug. The MeteoSwiss CSV is updated around 02:00 CET (for the `rka150d0` calendar-day column we use). Brief delays do occur.
 
-The fallback is safe: at worst, the soil store credits the same rain twice on consecutive days (rare), which only slightly delays irrigation. Once the CSV updates, the value is correct again.
+The fallback is safe: at worst, the soil store credits the same rain twice on consecutive days, which only slightly delays irrigation. Once the CSV updates, the value is correct again.
 
-If you see this warning **every day**, the rule is running too early — check the cron expression and the Exec Thing `interval`.
+If you see this warning **every day**, either:
+- The rule is running too early — check the cron expression
+- You may have set `METEO_COLUMN=3` (rre150d0, 06–06 UTC) which is updated much later — switch back to the default (column 4, rka150d0)
+
+---
+
+## Why two precipitation columns?
+
+The CSV has two columns with different time windows:
+
+| Column | Field | Window | Available |
+|--------|-------|--------|-----------|
+| 3 | `rre150d0` | 06 UTC – 06 UTC next day | ~08:00 local next day |
+| 4 | `rka150d0` | 00 UTC – 00 UTC (calendar day) | ~02:00 local next day |
+
+The scripts use **column 4 (rka150d0)** by default. It matches what people mean by "yesterday" and is available much earlier. To use column 3 instead (rarely useful), set `METEO_COLUMN=3` as environment variable in the Exec Thing.
 
 ---
 

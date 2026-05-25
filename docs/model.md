@@ -99,6 +99,21 @@ The "rain tomorrow" check uses both `precipitation` (expected value) and `precip
 
 ---
 
+## Data source: which precipitation column?
+
+The MeteoSwiss station CSVs contain two daily precipitation columns:
+
+| Field | Time window | Available from |
+|-------|-------------|----------------|
+| `rka150d0` | 00 UTC to 00 UTC (calendar day) | ~02:00 local, next day |
+| `rre150d0` | 06 UTC to 06 UTC next day | ~08:00 local, next day |
+
+This project uses **`rka150d0`** (column 4 in the CSV). It matches the everyday meaning of "yesterday" and is available much earlier — important because the evening decision rule (21:00) needs yesterday's value to already be in the CSV.
+
+In real-world data you will see rows where `rre150d0` is empty but `rka150d0` is populated. That's the data feed catching up: rka is published soon after midnight UTC, rre only after 06 UTC the following day.
+
+---
+
 ## Further reading
 
 - Hargreaves & Samani (1985): "Reference crop evapotranspiration from temperature" — the original paper
