@@ -71,6 +71,11 @@ then
     // Triggers an immediate fetch of the MeteoSwiss CSV and forecast,
     // so we work with the freshest possible data — not whatever was last
     // polled hours ago.
+    //
+    // NOTE: REFRESH does not update Exec Binding item states — it only
+    // triggers the command channel. If the script hasn't run yet or the
+    // interval hasn't elapsed, items may remain NULL. The NULL-fallbacks
+    // in section 1 below handle this gracefully.
     IrrigationRainYesterday.sendCommand(REFRESH)
     IrrigationTempMaxToday.sendCommand(REFRESH)
     IrrigationTempMinToday.sendCommand(REFRESH)
@@ -128,12 +133,14 @@ then
 
     // ── 3. Calculate ET₀ (simplified Hargreaves-Samani) ────────────────────
     //
-    //   ET₀ = 0.0023 × (Tmean + 17.8) × Tmax × 0.408
+    //   ET₀ = 0.0023 × (Tmean + 17.8) × sqrt(Tmax − Tmin) × Ra
     //
+    //   Ra ≈ 14.3 mm/day for ~47°N summer (extraterrestrial radiation)
     //   References: Hargreaves & Samani (1985), FAO-56
 
     val float tMean  = (tMax + tMin) / 2.0f
-    var float et0    = 0.0023f * (tMean + 17.8f) * tMax * 0.408f
+    val float tDiff  = Math.max(0.0f, tMax - tMin)
+    var float et0    = 0.0023f * (tMean + 17.8f) * Math.sqrt(tDiff).floatValue * 14.3f
     et0 = Math.max(0.0f, Math.min(et0, ET0_MAX_MM.floatValue))
     IrrigationET0Today.postUpdate(et0)
 

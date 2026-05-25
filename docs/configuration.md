@@ -95,6 +95,21 @@ if (doIrrigate) {
 }
 ```
 
+### 3e. Exec Binding whitelist
+
+openHAB 4+ requires commands to be explicitly whitelisted. Add your script paths to:
+
+```
+$OPENHAB_CONF/misc/exec.whitelist
+```
+
+One command per line, exactly as configured in the Thing:
+```
+/etc/openhab/scripts/rain_yesterday.sh
+```
+
+Without this file, the Exec Binding will refuse to run the scripts (state stays NULL).
+
 ---
 
 ## Step 4 — Configure persistence
