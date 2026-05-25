@@ -1,43 +1,63 @@
 # openHAB Lawn Irrigation — MeteoSwiss Integration
 
-Automated lawn irrigation control for openHAB, based on real measured precipitation data from MeteoSwiss (SwissMetNet network) and a 7-day weather forecast. Uses a soil moisture balance model to decide whether and how long to irrigate — no soil sensor required.
+A smart "should I irrigate tomorrow?" decision system for openHAB, based on real measured precipitation from MeteoSwiss (SwissMetNet) and a 7-day forecast. Uses a soil moisture balance model — no soil sensor required.
+
+This project does **one thing**: every evening at 21:00, it decides whether to set your existing irrigation trigger switch to ON or OFF. **Your existing setup handles the actual watering** (duration, valves, etc.).
 
 ---
 
 ## How it works
 
-Instead of a simple "did it rain?" threshold, this solution maintains a **virtual soil moisture store** (in mm of water). Every morning it:
-
-1. **Fetches yesterday's actual rainfall** from the nearest MeteoSwiss precipitation station (OGD open data, no API key required)
-2. **Estimates evapotranspiration** (ET₀) from today's forecast temperatures using a simplified Hargreaves formula
-3. **Updates the soil store**: `store = store + rain − ET₀` (clamped to 0–40 mm)
-4. **Checks tomorrow's forecast**: if significant rain is coming, waits
-5. **Decides**: irrigate or not, and for how long
-
-This means the system reacts correctly to hot dry spells (store drains fast) and to heavy rain events (store fills up, irrigation pauses for days).
-
 ```
-[MeteoSwiss OGD CSV]          [MeteoSwiss App API]
-  Station OPF (Opfikon)         Forecast (7 days)
-  Measured rain [mm/day]        Tmax, Tmin, precip tomorrow
-         │                              │
-         └──────────┬───────────────────┘
-                    ▼
-         [openHAB Rule — daily 06:00]
-                    │
-         ┌──────────▼──────────┐
-         │  Soil Store Update  │  rain_yesterday − ET₀(Tmax,Tmin)
-         │  Clamped 0–40 mm    │
-         └──────────┬──────────┘
-                    │
-         ┌──────────▼──────────┐
-         │  Decision Logic     │  store < threshold AND no rain tomorrow?
-         └──────────┬──────────┘
-                    │
-         ┌──────────▼──────────┐
-         │  Irrigate: ON/OFF   │  + calculated duration in minutes
-         └─────────────────────┘
+[MeteoSwiss OGD CSV]              [MeteoSwiss App API]
+  Yesterday's measured rain         Forecast: rain tomorrow,
+  from nearest station              Tmax/Tmin today
+         │                                  │
+         └──────────────┬───────────────────┘
+                        ▼
+            [openHAB rule — daily 21:00]
+                        │
+              ┌─────────▼──────────┐
+              │ Update soil store: │
+              │  + rain yesterday  │   "virtual bucket" of soil moisture,
+              │  − ET₀ today       │    clamped to 0–40 mm
+              └─────────┬──────────┘
+                        │
+              ┌─────────▼──────────┐
+              │ Decision logic     │
+              │                    │
+              │  store < critical  │  → trigger ON  (water urgently)
+              │  store < threshold │
+              │  & no rain coming  │  → trigger ON
+              │  store < threshold │
+              │  & rain coming     │  → trigger OFF (wait for rain)
+              │  store ok          │  → trigger OFF
+              └─────────┬──────────┘
+                        ▼
+              YOUR existing trigger switch
+              → your existing irrigation system runs
+                next morning for fixed duration
 ```
+
+Instead of a naive "did it rain last week?" rule, this model:
+- **Drains the store on hot days** (high ET₀) → recognises drought even after recent rain
+- **Fills the store on rainy days** (measured, not forecast) → grounded in reality
+- **Skips irrigation when rain is coming** → avoids watering before storms
+- **Maintains a persisted state** → survives openHAB restarts
+
+---
+
+## What you need before deploying
+
+1. **An existing irrigation trigger switch in openHAB**. When ON, your current setup waters the lawn the next morning for a deep-watering duration you've measured manually with a cup. This project decides whether to set that switch.
+
+2. **A persistence service** (MapDB or RRD4J) configured for the soil store item.
+
+3. **HTTP Binding** and **Exec Binding** installed in openHAB.
+
+4. **Internet access** from your openHAB server to:
+   - `data.geo.admin.ch` (precipitation data)
+   - `app-prod-ws.meteoswiss-app.ch` (forecast)
 
 ---
 
@@ -45,28 +65,25 @@ This means the system reacts correctly to hot dry spells (store drains fast) and
 
 ### 1. MeteoSwiss OGD — Precipitation stations (past)
 
-**URL pattern:**
 ```
-https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn-precip/{station_lower}/ogd-smn-precip_{station_lower}_d_recent.csv
+https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn-precip/{station}/ogd-smn-precip_{station}_d_recent.csv
 ```
 
 - Free, no authentication, CC-BY licence
 - Updated daily around 02:00 CET
-- Contains daily precipitation totals in mm (`rre150d0` column)
+- Daily precipitation totals in mm (column `rre150d0`)
 - ~140 automatic precipitation stations across Switzerland
 - Station list: [ogd-smn-precip_meta_stations.csv](https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn-precip/ogd-smn-precip_meta_stations.csv)
 
 ### 2. MeteoSwiss App API — Forecast (future)
 
-**URL pattern:**
 ```
 https://app-prod-ws.meteoswiss-app.ch/v2/plzDetail?plz={PLZ}00
 ```
 
 - Unofficial but stable app backend, no authentication needed
 - Returns 8-day forecast per Swiss postal code
-- Key fields used: `forecast[1].precipitation`, `forecast[1].precipitationMax`, `forecast[1].temperatureMax`, `forecast[1].temperatureMin`
-- Refresh every 30 minutes is sufficient
+- Key fields used: `forecast[1].precipitation`, `forecast[1].precipitationMax`, `forecast[0].temperatureMax/Min`
 
 ---
 
@@ -74,11 +91,11 @@ https://app-prod-ws.meteoswiss-app.ch/v2/plzDetail?plz={PLZ}00
 
 ```
 openhab-lawn-irrigation/
-├── README.md                        ← this file
+├── README.md
 ├── docs/
-│   ├── configuration.md             ← how to adapt for your location
-│   ├── model.md                     ← soil moisture model explained
-│   └── troubleshooting.md           ← common issues
+│   ├── configuration.md           ← step-by-step setup
+│   ├── model.md                   ← soil moisture model explained
+│   └── troubleshooting.md
 ├── openhab/
 │   ├── things/
 │   │   └── irrigation_weather.things
@@ -86,13 +103,12 @@ openhab-lawn-irrigation/
 │   │   └── irrigation.items
 │   ├── rules/
 │   │   └── irrigation.rules
-│   ├── scripts/
-│   │   └── rain_station.sh          ← fetches + sums rain from MeteoSwiss CSV
-│   └── transform/
-│       └── (none required)
+│   └── scripts/
+│       ├── rain_yesterday.sh      ← single-value, used by the rule
+│       └── rain_lastNdays.sh      ← 7-day diagnostic sum (optional)
 └── examples/
-    ├── station_zurich_opfikon.md    ← example: Wallisellen/Zurich area
-    └── find_your_station.md         ← how to find the nearest station
+    ├── station_zurich_opfikon.md  ← worked example: Wallisellen
+    └── find_your_station.md
 ```
 
 ---
@@ -100,21 +116,10 @@ openhab-lawn-irrigation/
 ## Quick start
 
 1. [Find your nearest MeteoSwiss station](examples/find_your_station.md)
-2. [Adapt the configuration](docs/configuration.md)
-3. Copy files from `openhab/` to your openHAB config directory
-4. Make the script executable: `chmod +x scripts/rain_station.sh`
+2. [Adapt the configuration](docs/configuration.md) — 4 places to change
+3. Copy files to your openHAB config directory
+4. `chmod +x` the shell scripts
 5. Restart openHAB or reload the rule file
-
----
-
-## Requirements
-
-- openHAB 3.x or 4.x
-- HTTP Binding (`openhab-binding-http`)
-- Exec Binding (`openhab-binding-exec`)
-- JavaScript (GraalVM) or DSL rules support
-- Persistence service (e.g. MapDB or RRD4J) for the soil store item
-- Internet access from the openHAB server
 
 ---
 

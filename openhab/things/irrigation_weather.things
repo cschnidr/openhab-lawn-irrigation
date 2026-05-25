@@ -8,7 +8,11 @@
 //
 // Adapt the following before use:
 //   1. baseURL in meteoSwissForecast → replace PLZ (e.g. 830400 for Wallisellen)
-//   2. command in rainStation → set correct station abbreviation (lowercase)
+//   2. Script paths in the two Exec Things → match your server's path
+//
+// The two Exec Things split responsibility:
+//   - rainYesterday: single value used by the irrigation balance rule
+//   - rain7d:        diagnostic 7-day sum for dashboards (optional)
 //
 // See docs/configuration.md for details.
 // =============================================================================
@@ -48,28 +52,41 @@ Thing http:url:meteoSwissForecast "MeteoSwiss Forecast" [
             [ stateTransformation="JSONPATH:$.forecast[1].temperatureMax" ]
         Type number : forecastTomorrowTempMin   "Tmin morgen [°C]"
             [ stateTransformation="JSONPATH:$.forecast[1].temperatureMin" ]
-
-        // Day after tomorrow (optional, for extended look-ahead)
-        Type number : forecastDay2Precip    "Regen übermorgen [mm]"
-            [ stateTransformation="JSONPATH:$.forecast[2].precipitation" ]
 }
 
 
-// ── MeteoSwiss OGD — Measured precipitation from nearest station ─────────────
+// ── MeteoSwiss OGD — Yesterday's measured rain (used by balance rule) ────────
 //
-// Runs the shell script that downloads the station CSV and returns the
-// 7-day precipitation sum as a single number.
+// Fetches a single value: yesterday's precipitation from the configured
+// MeteoSwiss station. Refresh every 4 hours — the CSV updates around 02:00
+// CET each morning.
 //
-// Script location on openHAB server: /etc/openhab/scripts/rain_station.sh
-// Make sure it is executable: chmod +x /etc/openhab/scripts/rain_station.sh
+// Script location on openHAB server: /etc/openhab/scripts/rain_yesterday.sh
+// Make sure it is executable: chmod +x /etc/openhab/scripts/rain_yesterday.sh
 //
-Thing exec:command:rainStation "MeteoSwiss Station Regen" [
-    command="/etc/openhab/scripts/rain_station.sh",
-    interval=3600,
+Thing exec:command:rainYesterday "MeteoSwiss Regen gestern" [
+    command="/etc/openhab/scripts/rain_yesterday.sh",
+    interval=14400,
     timeout=20,
     autorun=true
 ] {
     Channels:
-        Type number : output "7-Tage Regen [mm]"  []
-        Type number : exit   "Exit Code"           []
+        Type number : output "Regen gestern [mm]"  []
+        Type number : exit   "Exit Code"            []
+}
+
+
+// ── MeteoSwiss OGD — 7-day rain sum (diagnostic / dashboard only) ────────────
+//
+// Optional. Not used by the irrigation decision rule.
+//
+Thing exec:command:rain7d "MeteoSwiss Regen 7 Tage" [
+    command="/etc/openhab/scripts/rain_lastNdays.sh",
+    interval=14400,
+    timeout=20,
+    autorun=true
+] {
+    Channels:
+        Type number : output "7-Tage Regen [mm]"   []
+        Type number : exit   "Exit Code"            []
 }

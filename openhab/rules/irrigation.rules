@@ -2,17 +2,21 @@
 // irrigation.rules — Lawn irrigation decision logic
 // =============================================================================
 //
-// Runs daily at 06:00 and:
-//   1. Reads yesterday's measured rain from MeteoSwiss station (via shell script)
-//   2. Estimates today's evapotranspiration from forecast temperatures
-//   3. Updates the virtual soil moisture store
-//   4. Decides whether to irrigate and for how long
-//   5. Starts/stops the irrigation valve accordingly
+// Architecture:
+//   The user has an EXISTING irrigation trigger switch (item: IrrigationTrigger).
+//   When that switch is ON in the evening, irrigation runs the next morning
+//   for a fixed, manually-measured duration.
 //
-// Requires:
-//   - irrigation.items
-//   - irrigation_weather.things
-//   - Persistence for IrrigationSoilStore (see docs/configuration.md)
+//   This rule decides each evening whether to set the trigger ON or OFF
+//   based on:
+//     - yesterday's measured rain (from MeteoSwiss station, see scripts)
+//     - today's forecast temperatures (for ET₀ estimation)
+//     - tomorrow's forecast rain (skip irrigation if rain coming)
+//
+// IMPORTANT — adapt this to your setup:
+//   1. Replace "IrrigationTrigger" with your actual trigger switch item name
+//   2. Configure the parameters in the CONFIGURATION block below
+//   3. Persist IrrigationSoilStore (see docs/configuration.md)
 //
 // See docs/model.md for the science behind the calculations.
 // =============================================================================
@@ -30,54 +34,44 @@ val Number STORE_INITIAL_MM       = 20.0   // Store value on first run (50% capa
 val Number STORE_IRRIGATE_MM      = 18.0   // Irrigate when store falls below this [mm]
                                             // ≈ 45% of capacity
 
-val Number STORE_CRITICAL_MM      = 10.0   // Critical level (irrigate regardless) [mm]
+val Number STORE_CRITICAL_MM      = 10.0   // Critical level (irrigate regardless of forecast) [mm]
                                             // ≈ 25% of capacity
 
 val Number RAIN_TOMORROW_SKIP_MM  =  5.0   // Skip irrigation if this much rain forecast [mm]
 
 val Number RAIN_TOMORROW_MAX_SKIP = 10.0   // Skip if upper rain bound exceeds this [mm]
 
-val Number SPRINKLER_RATE_MM_H    =  8.0   // Sprinkler output [mm/hour]
-                                            // Measure with a container: fill depth in 30 min × 2
-
-val Number STORE_TARGET_MM        = 30.0   // Irrigate up to this level [mm] (< capacity)
-
 val Number ET0_MAX_MM             =  8.0   // Max plausible ET₀ in Switzerland [mm/day]
 // ──────────────────────────────────────────────────────────────────────────────
 
 
 // =============================================================================
-// Rule 1: Daily irrigation decision (06:00)
+// Rule: Daily irrigation decision
+// =============================================================================
+// Runs every evening at 21:00. The trigger switch state at this moment
+// determines whether irrigation will run the next morning.
 // =============================================================================
 rule "Irrigation — Daily Decision"
 when
-    Time cron "0 0 6 ? * * *"
+    Time cron "0 0 21 ? * * *"
 then
     logInfo("Irrigation", "=== Daily irrigation decision started ===")
 
-    // ── 1. Read weather inputs ──────────────────────────────────────────────
-
-    // Yesterday's measured rain (from MeteoSwiss OGD station, last value in CSV)
-    // The shell script sums the last 7 days; we re-use this as the input to the
-    // soil store. For the daily balance we actually want "yesterday" only.
-    // The script can be called with METEO_DAYS=1 for this; here we keep the
-    // 7-day sum as a separate diagnostic item and derive yesterday from persistence.
-    // Simpler approach: use the 1-day value from the script (set DAYS=1 in script,
-    // or call a second exec thing). For this example we use the stored state.
+    // ── 1. Read inputs (with safe defaults) ─────────────────────────────────
 
     var float rainYesterday = 0.0
     if (IrrigationRainYesterday.state != NULL && IrrigationRainYesterday.state != UNDEF) {
         rainYesterday = (IrrigationRainYesterday.state as Number).floatValue
-    } else if (IrrigationRainLast7d.state != NULL && IrrigationRainLast7d.state != UNDEF) {
-        // Fallback: use 7-day sum divided by 7 as rough daily estimate
-        rainYesterday = (IrrigationRainLast7d.state as Number).floatValue / 7.0
-        logWarn("Irrigation", "IrrigationRainYesterday not available, using 7d average as fallback")
+    } else {
+        logWarn("Irrigation", "IrrigationRainYesterday is NULL/UNDEF — using 0.0 mm")
     }
 
-    var float tMax = 20.0   // default: mild summer day
+    var float tMax = 20.0   // mild summer day defaults if forecast unavailable
     var float tMin = 12.0
     if (IrrigationTempMaxToday.state != NULL && IrrigationTempMaxToday.state != UNDEF) {
         tMax = (IrrigationTempMaxToday.state as Number).floatValue
+    } else {
+        logWarn("Irrigation", "IrrigationTempMaxToday is NULL/UNDEF — using default 20°C")
     }
     if (IrrigationTempMinToday.state != NULL && IrrigationTempMinToday.state != UNDEF) {
         tMin = (IrrigationTempMinToday.state as Number).floatValue
@@ -92,7 +86,7 @@ then
         rainTomorrowMax = (IrrigationRainTomorrowMax.state as Number).floatValue
     }
 
-    logInfo("Irrigation", "Inputs: rain_yesterday={} mm, Tmax={} °C, Tmin={} °C, rain_tomorrow={} mm (max {} mm)",
+    logInfo("Irrigation", "Inputs: rain_yesterday={} mm, Tmax={}°C, Tmin={}°C, rain_tomorrow={} mm (max {} mm)",
         rainYesterday, tMax, tMin, rainTomorrow, rainTomorrowMax)
 
 
@@ -102,9 +96,8 @@ then
     if (IrrigationSoilStore.state != NULL && IrrigationSoilStore.state != UNDEF) {
         store = (IrrigationSoilStore.state as Number).floatValue
     } else {
-        logInfo("Irrigation", "No persisted store value found — using initial value {} mm", STORE_INITIAL_MM)
+        logInfo("Irrigation", "No persisted store value — using initial {} mm", STORE_INITIAL_MM)
     }
-    logInfo("Irrigation", "Soil store before update: {} mm", store)
 
 
     // ── 3. Calculate ET₀ (simplified Hargreaves-Samani) ────────────────────
@@ -116,19 +109,16 @@ then
     val float tMean  = (tMax + tMin) / 2.0f
     var float et0    = 0.0023f * (tMean + 17.8f) * tMax * 0.408f
     et0 = Math.max(0.0f, Math.min(et0, ET0_MAX_MM.floatValue))
-
     IrrigationET0Today.postUpdate(et0)
-    logInfo("Irrigation", "ET₀ = {} mm/day (Tmean={} °C)", et0, tMean)
 
 
     // ── 4. Update soil store ────────────────────────────────────────────────
 
     store = store + rainYesterday - et0
     store = Math.max(0.0f, Math.min(store, STORE_CAPACITY_MM.floatValue))
-
     IrrigationSoilStore.postUpdate(store)
-    logInfo("Irrigation", "Soil store after update: {} mm (rain={} mm, ET₀={} mm)",
-        store, rainYesterday, et0)
+
+    logInfo("Irrigation", "Store balance: {} mm (rain={} mm, ET₀={} mm)", store, rainYesterday, et0)
 
 
     // ── 5. Irrigation decision ─────────────────────────────────────────────
@@ -142,17 +132,13 @@ then
     var boolean doIrrigate = false
     var String  reason     = ""
 
-    if (storeCritical && !rainExpectedTomorrow) {
+    if (storeCritical) {
         doIrrigate = true
-        reason = String.format("KRITISCH: Speicher %.0f mm — kein Regen morgen erwartet", store)
-
-    } else if (storeCritical && rainExpectedTomorrow) {
-        doIrrigate = true
-        reason = String.format("KRITISCH: Speicher %.0f mm — trotz Regen morgen (%.0f mm) irrigiert", store, rainTomorrow)
+        reason = String.format("KRITISCH: Speicher %.0f mm — bewässern (auch bei Regenprognose)", store)
 
     } else if (storeLow && !rainExpectedTomorrow) {
         doIrrigate = true
-        reason = String.format("NIEDRIG: Speicher %.0f mm — kein Regen morgen erwartet", store)
+        reason = String.format("NIEDRIG: Speicher %.0f mm — bewässern, kein Regen morgen", store)
 
     } else if (storeLow && rainExpectedTomorrow) {
         doIrrigate = false
@@ -160,96 +146,22 @@ then
 
     } else {
         doIrrigate = false
-        reason = String.format("OK: Speicher %.0f mm — keine Bewässerung nötig (ET₀=%.1f mm)", store, et0)
+        reason = String.format("OK: Speicher %.0f mm — keine Bewässerung nötig", store)
     }
 
     IrrigationDecisionReason.postUpdate(reason)
-    logInfo("Irrigation", "Decision: {} → {}", if (doIrrigate) "IRRIGATE" else "SKIP", reason)
+    logInfo("Irrigation", "Decision: {} → {}", if (doIrrigate) "ON" else "OFF", reason)
 
 
-    // ── 6. Calculate irrigation duration ───────────────────────────────────
+    // ── 6. Set the trigger switch ──────────────────────────────────────────
+    //
+    // CHANGE "IrrigationTrigger" to the name of YOUR existing trigger switch!
 
-    var int durationMinutes = 0
     if (doIrrigate) {
-        val float deficitMM = Math.max(0.0f, STORE_TARGET_MM.floatValue - store)
-        durationMinutes = (deficitMM / SPRINKLER_RATE_MM_H.floatValue * 60.0f).intValue
-        durationMinutes = Math.max(5, durationMinutes)   // minimum 5 minutes
-    }
-
-    IrrigationDurationMinutes.postUpdate(durationMinutes)
-    logInfo("Irrigation", "Irrigation duration: {} minutes", durationMinutes)
-
-
-    // ── 7. Execute irrigation ───────────────────────────────────────────────
-
-    if (doIrrigate && durationMinutes > 0) {
-        IrrigationValveSwitch.sendCommand(ON)
-        logInfo("Irrigation", "Valve opened — will run for {} minutes", durationMinutes)
+        IrrigationTrigger.sendCommand(ON)
     } else {
-        IrrigationValveSwitch.sendCommand(OFF)
-        logInfo("Irrigation", "Valve remains closed")
+        IrrigationTrigger.sendCommand(OFF)
     }
 
-    logInfo("Irrigation", "=== Daily irrigation decision complete ===")
-end
-
-
-// =============================================================================
-// Rule 2: Auto-off timer
-// =============================================================================
-// Turns off the valve after the calculated duration.
-// Triggered when the valve is turned ON by the decision rule above.
-// =============================================================================
-rule "Irrigation — Auto-Off Timer"
-when
-    Item IrrigationValveSwitch changed to ON
-then
-    val int duration = if (IrrigationDurationMinutes.state == NULL || IrrigationDurationMinutes.state == UNDEF)
-                          30
-                       else
-                          (IrrigationDurationMinutes.state as Number).intValue
-
-    logInfo("Irrigation", "Auto-off timer started: {} minutes", duration)
-    IrrigationTimerActive.postUpdate(ON)
-
-    // Schedule valve off
-    createTimer(now.plusMinutes(duration)) [|
-        IrrigationValveSwitch.sendCommand(OFF)
-        IrrigationTimerActive.postUpdate(OFF)
-        logInfo("Irrigation", "Auto-off timer expired — valve closed after {} minutes", duration)
-    ]
-end
-
-
-// =============================================================================
-// Rule 3: Update yesterday's rain from station data
-// =============================================================================
-// Extracts the single most recent daily value from the 7-day sum by comparing
-// with the previous 6-day sum. Runs shortly after the script fetches new data.
-//
-// Alternative: configure the shell script with METEO_DAYS=1 via a second
-// Exec Thing and link that channel directly to IrrigationRainYesterday.
-// =============================================================================
-rule "Irrigation — Update Rain Yesterday"
-when
-    Item IrrigationRainLast7d received update
-then
-    // The exec script returns the 7-day sum.
-    // We store it; the decision rule uses IrrigationRainYesterday which you
-    // can populate by running the script with DAYS=1 in a separate Exec Thing.
-    // This rule is a placeholder — see docs/configuration.md for the recommended
-    // two-script setup.
-    logDebug("Irrigation", "7-day rain sum updated: {} mm", IrrigationRainLast7d.state)
-end
-
-
-// =============================================================================
-// Rule 4: Manual override — force irrigation off
-// =============================================================================
-rule "Irrigation — Manual Off"
-when
-    Item IrrigationValveSwitch changed to OFF
-then
-    IrrigationTimerActive.postUpdate(OFF)
-    logInfo("Irrigation", "Valve manually turned off")
+    logInfo("Irrigation", "=== Decision complete ===")
 end

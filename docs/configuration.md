@@ -1,123 +1,107 @@
 # Configuration Guide
 
-This document explains every parameter you need to adapt for your location and setup.
+Four things to adapt for your installation. This document walks through each one.
 
 ---
 
 ## Step 1 — Find your MeteoSwiss precipitation station
 
-Download the station list and find the station closest to your garden:
-
+Download the station list:
 ```
 https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn-precip/ogd-smn-precip_meta_stations.csv
 ```
 
-The file is semicolon-separated. Relevant columns:
+Open in Excel/Numbers/LibreOffice and pick the station closest to your garden. Relevant columns:
 
-| Column | Description |
-|--------|-------------|
-| `station_abbr` | Short code used in all URLs (e.g. `OPF`) |
-| `station_name` | Human-readable name (e.g. `Opfikon`) |
-| `station_canton` | Canton abbreviation |
+| Column | Notes |
+|--------|-------|
+| `station_abbr` | The code you'll use everywhere (e.g. `OPF`) — **lowercase in URLs** |
+| `station_name` | Human-readable name |
+| `station_canton` | Filter by canton first |
 | `station_coordinates_wgs84_lat/lon` | For distance calculation |
-| `station_height_masl` | Altitude in metres |
 
-**Tip:** Open the CSV in Excel or Numbers, sort by canton, and pick the geographically closest station. Alternatively, use [map.geo.admin.ch](https://map.geo.admin.ch) and search for "SwissMetNet".
+Verify the URL works:
+```bash
+curl -s "https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn-precip/opf/ogd-smn-precip_opf_d_recent.csv" | head -3
+```
 
-The station abbreviation appears **lowercase** in URLs (e.g. `OPF` → `opf`).
+You should see CSV rows. If it 404s, recheck the abbreviation (must be lowercase).
 
-See also: [examples/find_your_station.md](../examples/find_your_station.md)
+See [examples/find_your_station.md](../examples/find_your_station.md) for a quick lookup table per major city.
 
 ---
 
 ## Step 2 — Find your postal code (PLZ)
 
-The MeteoSwiss forecast API uses a 4-digit Swiss postal code, zero-padded to 6 digits:
+The MeteoSwiss forecast API uses a 4-digit Swiss PLZ, zero-padded to 6 digits:
 
-```
-PLZ 8304 → URL parameter: plz=830400
-PLZ 3001 → URL parameter: plz=300100
-```
-
----
-
-## Step 3 — Adapt the shell script
-
-Edit `openhab/scripts/rain_station.sh` and set:
-
-```bash
-STATION="opf"   # ← your station abbreviation, lowercase
-```
-
-Verify it works by running the script manually:
-```bash
-bash openhab/scripts/rain_station.sh
-# Expected output: a single number like 3.2
-```
+| Your PLZ | API parameter |
+|----------|---------------|
+| 8304 | `plz=830400` |
+| 3001 | `plz=300100` |
+| 6300 | `plz=630000` |
 
 ---
 
-## Step 4 — Adapt the Things file
+## Step 3 — Edit the four places that need your values
 
-Edit `openhab/things/irrigation_weather.things`:
+### 3a. Shell scripts (`openhab/scripts/*.sh`)
+
+Edit both scripts — change the default station:
+
+```bash
+STATION="${METEO_STATION:-opf}"   # ← replace "opf" with your station, lowercase
+```
+
+Test from the command line:
+```bash
+bash rain_yesterday.sh
+# → outputs a number like "4.2"
+```
+
+### 3b. Things file (`openhab/things/irrigation_weather.things`)
+
+Change the `baseURL` to use your PLZ:
 
 ```java
-// MeteoSwiss App API — change PLZ here
 Thing http:url:meteoSwissForecast "MeteoSwiss Forecast" [
     baseURL="https://app-prod-ws.meteoswiss-app.ch/v2/plzDetail?plz=830400",
     //                                                              ^^^^^^
-    //                                              Replace with your PLZ + "00"
-    ...
-]
+    //                                              your PLZ + "00"
 ```
 
----
+Confirm the script paths match where you'll install them on your openHAB server:
+```java
+command="/etc/openhab/scripts/rain_yesterday.sh",
+```
 
-## Step 5 — Tune the irrigation model
+### 3c. Items file (`openhab/items/irrigation.items`)
 
-All tunable parameters are at the top of `openhab/rules/irrigation.rules`:
+The file **does not define** the irrigation trigger switch — it expects you to already have one. Make sure your existing trigger switch is named so the rule can find it.
+
+If your switch is called e.g. `BewaesserungMorgen`, you need to either:
+- Rename it to `IrrigationTrigger`, **or**
+- Edit the rule file (see step 3d below)
+
+### 3d. Rules file (`openhab/rules/irrigation.rules`)
+
+If you didn't rename your existing trigger switch, change the two lines near the bottom of the rule:
 
 ```javascript
-// ── CONFIGURATION ──────────────────────────────────────────────────
-val STORE_CAPACITY_MM    = 40.0  // Max soil water store [mm]
-val STORE_INITIAL_MM     = 20.0  // Starting value if no history [mm]
-val STORE_IRRIGATE_MM    = 18.0  // Irrigate when store falls below this
-val STORE_CRITICAL_MM    = 10.0  // Critical level (irrigate even if uncertain)
-val RAIN_TOMORROW_SKIP   =  5.0  // Skip irrigation if this much rain forecast [mm]
-val RAIN_TOMORROW_MAX_SKIP = 10.0 // Skip if max forecast exceeds this [mm]
-val SPRINKLER_RATE_MM_H  =  8.0  // Your sprinkler output in mm/hour
-val STORE_TARGET_MM      = 30.0  // Irrigate up to this level
-// ───────────────────────────────────────────────────────────────────
+if (doIrrigate) {
+    IrrigationTrigger.sendCommand(ON)      // ← use your switch name
+} else {
+    IrrigationTrigger.sendCommand(OFF)     // ← use your switch name
+}
 ```
-
-### Parameter guide
-
-**`STORE_CAPACITY_MM`** — Maximum water the soil can hold in the root zone.
-- Sandy soil: 20–25 mm
-- Loamy soil (typical Swiss Mittelland): 35–45 mm
-- Clay-rich soil: 50–60 mm
-
-**`STORE_IRRIGATE_MM`** — Threshold below which irrigation starts.
-- A value of ~45% of capacity is a good starting point (18 mm for 40 mm capacity).
-- Lower value = more drought-tolerant behaviour.
-
-**`RAIN_TOMORROW_SKIP`** — Forecast rain amount that causes irrigation to be skipped.
-- 5 mm is conservative (typical light rain). For lawns that need more water, raise to 8 mm.
-
-**`SPRINKLER_RATE_MM_H`** — How much water your sprinkler delivers per hour.
-- Measure it: place a flat container (e.g. a tuna tin) in the sprinkler zone, run for 30 min, measure depth, multiply by 2.
-
-**`STORE_TARGET_MM`** — Target level after irrigation.
-- Should be less than STORE_CAPACITY_MM to leave room for incoming rain.
-- 30 mm (75% of 40 mm) is a reasonable default.
 
 ---
 
-## Step 6 — Configure persistence
+## Step 4 — Configure persistence
 
-The soil store value (`IrrigationSoilStore`) must persist across openHAB restarts.
+The soil store (`IrrigationSoilStore`) must persist across restarts.
 
-In `services/persistence/mapdb.persist` (or your chosen persistence service):
+Add to `services/persistence/mapdb.persist` (or your persistence service config):
 
 ```
 Strategies {
@@ -128,36 +112,58 @@ Items {
 }
 ```
 
-Without persistence, the store resets to `STORE_INITIAL_MM` after every restart.
+Without this, the store resets to 20 mm on every openHAB restart and the model produces wrong decisions for several days afterwards.
 
 ---
 
-## Step 7 — Connect your irrigation switch
+## Step 5 — Tune the irrigation model (optional)
 
-The rule sends `ON`/`OFF` to the item `IrrigationValveSwitch`. Wire this to whatever controls your valve:
+The defaults work for typical Swiss Mittelland conditions. If your soil or climate differs, adjust the values at the top of `openhab/rules/irrigation.rules`:
 
-```java
-// In irrigation.items — replace with your actual binding:
-Switch IrrigationValveSwitch "Irrigation Valve" { channel="..." }
+```javascript
+val Number STORE_CAPACITY_MM      = 40.0   // Soil water capacity [mm]
+val Number STORE_INITIAL_MM       = 20.0   // Starting value, first run
+val Number STORE_IRRIGATE_MM      = 18.0   // Irrigate below this
+val Number STORE_CRITICAL_MM      = 10.0   // Critical: irrigate even with rain forecast
+val Number RAIN_TOMORROW_SKIP_MM  =  5.0   // Skip if forecast >= this
+val Number RAIN_TOMORROW_MAX_SKIP = 10.0   // Skip if max forecast >= this
+val Number ET0_MAX_MM             =  8.0   // Cap on daily evapotranspiration
+```
 
-// Examples:
-// Z-Wave switch:     { channel="zwave:device:xxx:switch_binary" }
-// Shelly:            { channel="http:url:shelly:switch" }
-// MQTT:              { channel="mqtt:topic:broker:irrigation:command" }
-// Exec (GPIO script):{ channel="exec:command:valve:run" }
+### Tuning guide
+
+| Parameter | Lower it if... | Raise it if... |
+|-----------|---------------|----------------|
+| `STORE_CAPACITY_MM` | Sandy soil (20–25) | Clay soil (50–60) |
+| `STORE_IRRIGATE_MM` | You want a drier, drought-hardened lawn | Your lawn dries out before the rule triggers |
+| `RAIN_TOMORROW_SKIP_MM` | You want to be more aggressive (water even with light rain forecast) | You want to be conservative (let any rain do the work) |
+
+The defaults assume **loamy soil, ~40 mm root zone capacity** (typical for Glattal/Mittelland).
+
+---
+
+## Step 6 — When does the rule run?
+
+Default: **daily at 21:00**. The decision is set on the trigger switch and your existing irrigation system reads it the next morning.
+
+To change the time, edit the cron expression in the rule:
+```javascript
+Time cron "0 0 21 ? * * *"
+//             ^^
+//             hour of day (24h format)
 ```
 
 ---
 
-## Example configurations
+## Worked example
 
-| Location | Station | PLZ |
-|----------|---------|-----|
-| Wallisellen / Zurich | OPF (Opfikon) | 8304 |
-| Bern | BEP (Belp) | 3001 |
-| Basel | — use KAI (Kaiserstuhl) or OED (Ehrendingen) | 4001 |
-| Winterthur | BUE (Bülach) | 8400 |
-| St. Gallen | FLW (Flawil) | 9000 |
-| Lucerne | ENT (Entlebuch) | 6000 |
+| Location | Station (lowercase) | PLZ | API param |
+|----------|--------------------|------|------------|
+| Wallisellen / Glattal | `opf` (Opfikon) | 8304 | `plz=830400` |
+| Bern Stadt | `bep` (Belp) | 3001 | `plz=300100` |
+| Basel | `kai` (Kaiserstuhl) | 4001 | `plz=400100` |
+| Winterthur | `bue` (Bülach) | 8400 | `plz=840000` |
+| St. Gallen | `flw` (Flawil) | 9000 | `plz=900000` |
+| Lugano | `col` (Coldrerio) | 6900 | `plz=690000` |
 
 See [examples/station_zurich_opfikon.md](../examples/station_zurich_opfikon.md) for a complete worked example.

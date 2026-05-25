@@ -18,21 +18,26 @@ jobs:
 
       - name: Lint shell scripts
         run: |
-          shellcheck openhab/scripts/rain_station.sh
           shellcheck openhab/scripts/rain_yesterday.sh
-
-      - name: Test rain_station.sh (live fetch)
-        run: |
-          bash openhab/scripts/rain_station.sh
-        env:
-          METEO_STATION: opf
-          METEO_DAYS: 7
+          shellcheck openhab/scripts/rain_lastNdays.sh
 
       - name: Test rain_yesterday.sh (live fetch)
         run: |
-          bash openhab/scripts/rain_yesterday.sh
+          result=$(bash openhab/scripts/rain_yesterday.sh)
+          echo "Yesterday's rain at OPF: $result mm"
+          # sanity check: result must be a number
+          echo "$result" | grep -E '^[0-9]+\.[0-9]+$'
         env:
           METEO_STATION: opf
+
+      - name: Test rain_lastNdays.sh (live fetch)
+        run: |
+          result=$(bash openhab/scripts/rain_lastNdays.sh)
+          echo "7-day rain at OPF: $result mm"
+          echo "$result" | grep -E '^[0-9]+\.[0-9]+$'
+        env:
+          METEO_STATION: opf
+          METEO_DAYS: 7
 
   validate-markdown:
     name: Validate documentation

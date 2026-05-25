@@ -2,6 +2,16 @@
 // irrigation.items — Lawn irrigation system items
 // =============================================================================
 //
+// Architecture note:
+//   The user already has an EXISTING irrigation trigger switch in openHAB.
+//   When that switch is ON, irrigation runs the next morning for a fixed,
+//   manually-measured duration (deep irrigation).
+//
+//   This system does NOT replace that mechanism. It only DECIDES each evening
+//   whether the trigger switch should be ON or OFF for the next morning.
+//
+// =============================================================================
+//
 // Groups
 // ──────────────────────────────────────────────────────────────────────────────
 Group gIrrigation          "Bewässerung"          <water>
@@ -10,10 +20,15 @@ Group gIrrigationWeather   "Wetter Bewässerung"   <sun_clouds>
 
 // ── Weather inputs (from Things) ─────────────────────────────────────────────
 
-// Measured precipitation — 7-day sum from MeteoSwiss station (OPF or your station)
+// Yesterday's measured rain — used directly in the soil store balance
+Number:Length IrrigationRainYesterday  "Regen gestern [%.1f mm]"  <rain>
+    (gIrrigationWeather)
+    { channel="exec:command:rainYesterday:output" }
+
+// 7-day sum — diagnostic only, not used in the decision logic
 Number:Length IrrigationRainLast7d    "Regen letzte 7 Tage [%.1f mm]"  <rain>
     (gIrrigationWeather)
-    { channel="exec:command:rainStation:output" }
+    { channel="exec:command:rain7d:output" }
 
 // Forecast temperatures (for ET₀ calculation)
 Number        IrrigationTempMaxToday  "Tmax heute [%.0f °C]"           <temperature>
@@ -36,7 +51,9 @@ Number:Length IrrigationRainTomorrowMax "Regen morgen max [%.1f mm]"   <rain>
 
 // ── Calculated state (updated by rule) ───────────────────────────────────────
 
-// Virtual soil moisture store [mm] — MUST be persisted (see docs/configuration.md)
+// Virtual soil moisture store [mm] — MUST be persisted
+// Without persistence, this resets to STORE_INITIAL_MM on every openHAB restart
+// See docs/configuration.md for persistence setup.
 Number:Length IrrigationSoilStore      "Bodenspeicher [%.1f mm]"       <cistern>
     (gIrrigation)
 
@@ -44,31 +61,27 @@ Number:Length IrrigationSoilStore      "Bodenspeicher [%.1f mm]"       <cistern>
 Number:Length IrrigationET0Today       "Verdunstung heute [%.1f mm]"   <sun>
     (gIrrigation)
 
-// Yesterday's measured rain used in today's balance [mm]
-Number:Length IrrigationRainYesterday  "Regen gestern gemessen [%.1f mm]" <rain>
-    (gIrrigation)
-
-// Irrigation duration calculated by the model [minutes]
-Number        IrrigationDurationMinutes "Bewässerungsdauer [%.0f min]"  <time>
-    (gIrrigation)
-
 // Human-readable explanation of the irrigation decision
 String        IrrigationDecisionReason "Entscheidung [%s]"              <text>
     (gIrrigation)
 
 
-// ── Control output ────────────────────────────────────────────────────────────
+// ── Trigger output ────────────────────────────────────────────────────────────
 
-// Main irrigation switch — link to your actual valve/relay here
-// Replace the channel with your hardware binding:
-//   Z-Wave:  { channel="zwave:device:xxx:switch_binary" }
-//   Shelly:  { channel="http:url:shelly:switch" }
-//   MQTT:    { channel="mqtt:topic:broker:irrigation:command" }
-Switch IrrigationValveSwitch  "Bewässerungsventil"  <water>
-    (gIrrigation)
-    // { channel="YOUR_BINDING_HERE" }
-
-// Optional: timer to auto-off after calculated duration
-// (implement as a separate rule if your valve doesn't have built-in timing)
-Switch IrrigationTimerActive  "Bewässerungs-Timer läuft"  <time>
-    (gIrrigation)
+// IMPORTANT:
+// This item refers to your EXISTING irrigation trigger switch.
+// Do NOT define it here if it is already defined in another items file —
+// instead, comment out the line below and adjust the rule to use your
+// existing item name.
+//
+// If you currently don't have such a switch, define and link it here:
+//
+// Switch IrrigationTrigger "Bewässerung morgen aktiv"  <water>
+//     (gIrrigation)
+//     { channel="..." }   // ← link to your physical relay / valve trigger
+//
+// The decision rule does ONE thing with this item:
+//   - sendCommand(ON)  if soil store is low and no rain expected tomorrow
+//   - sendCommand(OFF) otherwise
+//
+// Duration and watering control are handled by your existing setup.
