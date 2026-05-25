@@ -71,6 +71,11 @@ then
     // Triggers an immediate fetch of the MeteoSwiss CSV and forecast,
     // so we work with the freshest possible data — not whatever was last
     // polled hours ago.
+    //
+    // NOTE: REFRESH does not update Exec Binding item states — it only
+    // triggers the command channel. If the script hasn't run yet or the
+    // interval hasn't elapsed, items may remain NULL. The NULL-fallbacks
+    // in section 1 below handle this gracefully.
     IrrigationRainYesterday.sendCommand(REFRESH)
     IrrigationTempMaxToday.sendCommand(REFRESH)
     IrrigationTempMinToday.sendCommand(REFRESH)
