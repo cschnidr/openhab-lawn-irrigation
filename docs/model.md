@@ -45,12 +45,15 @@ Evapotranspiration (ET₀) is the combined water loss from soil evaporation and 
 Without a full weather station, we use the **simplified Hargreaves-Samani formula**, which needs only Tmax and Tmin:
 
 ```
-ET₀ = 0.0023 × (Tmean + 17.8) × Tmax × 0.408
+ET₀ = 0.0023 × (Tmean + 17.8) × sqrt(Tmax − Tmin) × Ra
 ```
 
 Where:
 - `Tmean = (Tmax + Tmin) / 2` in °C
-- Result is clamped to 0–8 mm/day (physically plausible range for Switzerland)
+- `Ra` ≈ 14.3 mm/day (extraterrestrial radiation at ~47°N in summer)
+- Result is clamped to 0–8 mm/day (physically plausible range for Switzerland) 
+
+The original Hargreaves-Samani paper uses `sqrt(Tmax − Tmin)` as a proxy for solar radiation — not `Tmax` directly.
 
 This formula is well-validated for Swiss Mittelland conditions. It underestimates ET₀ on very sunny, windy days and overestimates it on cool, overcast days — but averages out well over a week.
 
