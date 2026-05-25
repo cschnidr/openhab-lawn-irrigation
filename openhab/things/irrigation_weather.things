@@ -1,0 +1,75 @@
+// =============================================================================
+// irrigation_weather.things — MeteoSwiss weather data for lawn irrigation
+// =============================================================================
+//
+// Requires:
+//   - HTTP Binding  (openhab-binding-http)
+//   - Exec Binding  (openhab-binding-exec)
+//
+// Adapt the following before use:
+//   1. baseURL in meteoSwissForecast → replace PLZ (e.g. 830400 for Wallisellen)
+//   2. command in rainStation → set correct station abbreviation (lowercase)
+//
+// See docs/configuration.md for details.
+// =============================================================================
+
+
+// ── MeteoSwiss App API — 8-day forecast ──────────────────────────────────────
+//
+// Unofficial but stable MeteoSwiss app backend.
+// No authentication required.
+// Replace "830400" with your PLZ + "00" (e.g. PLZ 8304 → 830400)
+//
+Thing http:url:meteoSwissForecast "MeteoSwiss Forecast" [
+    baseURL="https://app-prod-ws.meteoswiss-app.ch/v2/plzDetail?plz=830400",
+    refresh=1800,
+    timeout=10000,
+    headers="User-Agent=openHAB"
+] {
+    Channels:
+        // Current temperature
+        Type number : currentTemp        "Aktuelle Temperatur [°C]"
+            [ stateTransformation="JSONPATH:$.currentWeather.temperature" ]
+
+        // Today's forecast
+        Type number : forecastTodayPrecip    "Regen heute Forecast [mm]"
+            [ stateTransformation="JSONPATH:$.forecast[0].precipitation" ]
+        Type number : forecastTodayTempMax   "Tmax heute [°C]"
+            [ stateTransformation="JSONPATH:$.forecast[0].temperatureMax" ]
+        Type number : forecastTodayTempMin   "Tmin heute [°C]"
+            [ stateTransformation="JSONPATH:$.forecast[0].temperatureMin" ]
+
+        // Tomorrow's forecast (key for irrigation decision)
+        Type number : forecastTomorrowPrecip    "Regen morgen Forecast [mm]"
+            [ stateTransformation="JSONPATH:$.forecast[1].precipitation" ]
+        Type number : forecastTomorrowPrecipMax "Regen morgen max [mm]"
+            [ stateTransformation="JSONPATH:$.forecast[1].precipitationMax" ]
+        Type number : forecastTomorrowTempMax   "Tmax morgen [°C]"
+            [ stateTransformation="JSONPATH:$.forecast[1].temperatureMax" ]
+        Type number : forecastTomorrowTempMin   "Tmin morgen [°C]"
+            [ stateTransformation="JSONPATH:$.forecast[1].temperatureMin" ]
+
+        // Day after tomorrow (optional, for extended look-ahead)
+        Type number : forecastDay2Precip    "Regen übermorgen [mm]"
+            [ stateTransformation="JSONPATH:$.forecast[2].precipitation" ]
+}
+
+
+// ── MeteoSwiss OGD — Measured precipitation from nearest station ─────────────
+//
+// Runs the shell script that downloads the station CSV and returns the
+// 7-day precipitation sum as a single number.
+//
+// Script location on openHAB server: /etc/openhab/scripts/rain_station.sh
+// Make sure it is executable: chmod +x /etc/openhab/scripts/rain_station.sh
+//
+Thing exec:command:rainStation "MeteoSwiss Station Regen" [
+    command="/etc/openhab/scripts/rain_station.sh",
+    interval=3600,
+    timeout=20,
+    autorun=true
+] {
+    Channels:
+        Type number : output "7-Tage Regen [mm]"  []
+        Type number : exit   "Exit Code"           []
+}

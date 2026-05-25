@@ -1,0 +1,74 @@
+// =============================================================================
+// irrigation.items — Lawn irrigation system items
+// =============================================================================
+//
+// Groups
+// ──────────────────────────────────────────────────────────────────────────────
+Group gIrrigation          "Bewässerung"          <water>
+Group gIrrigationWeather   "Wetter Bewässerung"   <sun_clouds>
+
+
+// ── Weather inputs (from Things) ─────────────────────────────────────────────
+
+// Measured precipitation — 7-day sum from MeteoSwiss station (OPF or your station)
+Number:Length IrrigationRainLast7d    "Regen letzte 7 Tage [%.1f mm]"  <rain>
+    (gIrrigationWeather)
+    { channel="exec:command:rainStation:output" }
+
+// Forecast temperatures (for ET₀ calculation)
+Number        IrrigationTempMaxToday  "Tmax heute [%.0f °C]"           <temperature>
+    (gIrrigationWeather)
+    { channel="http:url:meteoSwissForecast:forecastTodayTempMax" }
+
+Number        IrrigationTempMinToday  "Tmin heute [%.0f °C]"           <temperature>
+    (gIrrigationWeather)
+    { channel="http:url:meteoSwissForecast:forecastTodayTempMin" }
+
+// Forecast rain tomorrow (for skip-irrigation logic)
+Number:Length IrrigationRainTomorrow    "Regen morgen [%.1f mm]"        <rain>
+    (gIrrigationWeather)
+    { channel="http:url:meteoSwissForecast:forecastTomorrowPrecip" }
+
+Number:Length IrrigationRainTomorrowMax "Regen morgen max [%.1f mm]"   <rain>
+    (gIrrigationWeather)
+    { channel="http:url:meteoSwissForecast:forecastTomorrowPrecipMax" }
+
+
+// ── Calculated state (updated by rule) ───────────────────────────────────────
+
+// Virtual soil moisture store [mm] — MUST be persisted (see docs/configuration.md)
+Number:Length IrrigationSoilStore      "Bodenspeicher [%.1f mm]"       <cistern>
+    (gIrrigation)
+
+// Estimated evapotranspiration today [mm]
+Number:Length IrrigationET0Today       "Verdunstung heute [%.1f mm]"   <sun>
+    (gIrrigation)
+
+// Yesterday's measured rain used in today's balance [mm]
+Number:Length IrrigationRainYesterday  "Regen gestern gemessen [%.1f mm]" <rain>
+    (gIrrigation)
+
+// Irrigation duration calculated by the model [minutes]
+Number        IrrigationDurationMinutes "Bewässerungsdauer [%.0f min]"  <time>
+    (gIrrigation)
+
+// Human-readable explanation of the irrigation decision
+String        IrrigationDecisionReason "Entscheidung [%s]"              <text>
+    (gIrrigation)
+
+
+// ── Control output ────────────────────────────────────────────────────────────
+
+// Main irrigation switch — link to your actual valve/relay here
+// Replace the channel with your hardware binding:
+//   Z-Wave:  { channel="zwave:device:xxx:switch_binary" }
+//   Shelly:  { channel="http:url:shelly:switch" }
+//   MQTT:    { channel="mqtt:topic:broker:irrigation:command" }
+Switch IrrigationValveSwitch  "Bewässerungsventil"  <water>
+    (gIrrigation)
+    // { channel="YOUR_BINDING_HERE" }
+
+// Optional: timer to auto-off after calculated duration
+// (implement as a separate rule if your valve doesn't have built-in timing)
+Switch IrrigationTimerActive  "Bewässerungs-Timer läuft"  <time>
+    (gIrrigation)

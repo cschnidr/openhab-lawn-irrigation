@@ -1,0 +1,11 @@
+# openHAB generated files
+*.bak
+*.log
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+*.swp
+*~

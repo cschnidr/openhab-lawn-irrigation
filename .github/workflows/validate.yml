@@ -1,0 +1,48 @@
+name: Validate openHAB configuration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-scripts:
+    name: Validate shell scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Lint shell scripts
+        run: |
+          shellcheck openhab/scripts/rain_station.sh
+          shellcheck openhab/scripts/rain_yesterday.sh
+
+      - name: Test rain_station.sh (live fetch)
+        run: |
+          bash openhab/scripts/rain_station.sh
+        env:
+          METEO_STATION: opf
+          METEO_DAYS: 7
+
+      - name: Test rain_yesterday.sh (live fetch)
+        run: |
+          bash openhab/scripts/rain_yesterday.sh
+        env:
+          METEO_STATION: opf
+
+  validate-markdown:
+    name: Validate documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          config-file: '.github/mlc_config.json'
+        continue-on-error: true   # don't fail on external link timeouts

@@ -1,0 +1,106 @@
+# Soil Moisture Model
+
+This document explains the science behind the irrigation decision logic.
+
+---
+
+## Why not just use a rain threshold?
+
+A simple rule like "skip irrigation if it rained more than 10 mm in the last 7 days" fails in two common situations:
+
+- **Hot dry week after rain**: 15 mm fell 5 days ago, but 30°C heat has evaporated it all. The lawn still needs water.
+- **Rain just yesterday**: 8 mm fell yesterday. The threshold says "no irrigation" — but actually 8 mm is fine for a day, not a week.
+
+A soil moisture balance correctly handles both cases.
+
+---
+
+## The virtual soil store
+
+The model tracks a single state variable: **the current water content of the soil root zone**, in mm.
+
+This is a standard agronomic concept. 1 mm of soil water = 1 litre per m². A typical lawn root zone (top 15–20 cm) holds between 20 and 50 mm of plant-available water, depending on soil texture.
+
+```
+Store [mm]
+  40 ┤████████████████████████  ← capacity (field capacity)
+  30 ┤████████████████████████  ← target after irrigation
+  18 ┤──────────────────────── ← irrigation threshold
+  10 ┤──────────────────────── ← critical threshold
+   0 ┤                          ← wilting point
+```
+
+Each day, the store is updated:
+
+```
+store_new = clamp(store_old + rain_yesterday − ET₀_today, 0, CAPACITY)
+```
+
+---
+
+## Evapotranspiration estimation (ET₀)
+
+Evapotranspiration (ET₀) is the combined water loss from soil evaporation and plant transpiration, in mm/day. It depends primarily on temperature, solar radiation, humidity, and wind.
+
+Without a full weather station, we use the **simplified Hargreaves-Samani formula**, which needs only Tmax and Tmin:
+
+```
+ET₀ = 0.0023 × (Tmean + 17.8) × Tmax × 0.408
+```
+
+Where:
+- `Tmean = (Tmax + Tmin) / 2` in °C
+- Result is clamped to 0–8 mm/day (physically plausible range for Switzerland)
+
+This formula is well-validated for Swiss Mittelland conditions. It underestimates ET₀ on very sunny, windy days and overestimates it on cool, overcast days — but averages out well over a week.
+
+**Typical values for the Zurich area:**
+
+| Condition | Tmax | Tmin | ET₀ |
+|-----------|------|------|-----|
+| Cool spring day | 15°C | 6°C | ~1.5 mm/day |
+| Typical summer day | 25°C | 14°C | ~4.0 mm/day |
+| Hot summer day | 32°C | 18°C | ~6.5 mm/day |
+| Heatwave | 37°C | 22°C | ~8.0 mm/day |
+
+---
+
+## Decision logic
+
+```
+Every morning at 06:00:
+
+1. Fetch rain_yesterday from MeteoSwiss station (measured)
+2. Fetch Tmax, Tmin from MeteoSwiss forecast (today)
+3. Fetch rain_tomorrow from MeteoSwiss forecast
+
+4. Calculate ET₀ from Tmax, Tmin
+5. Update store = clamp(store + rain_yesterday − ET₀, 0, capacity)
+
+6. If store < critical AND no rain tomorrow  → IRRIGATE (urgent)
+7. If store < threshold AND no rain tomorrow → IRRIGATE
+8. If store < threshold AND rain tomorrow    → WAIT (let rain top up the store)
+9. If store >= threshold                     → NO IRRIGATION
+
+10. If irrigating: duration = (target − store) / sprinkler_rate × 60 minutes
+```
+
+The "rain tomorrow" check uses both `precipitation` (expected value) and `precipitationMax` (upper bound of forecast uncertainty). This avoids unnecessary irrigation when rain is likely even if not certain.
+
+---
+
+## Model limitations
+
+- **No wind correction**: ET₀ is slightly underestimated on windy days.
+- **No shade correction**: The model assumes full sun exposure. Shaded lawns may need less irrigation.
+- **Forecast uncertainty**: The "rain tomorrow" decision relies on a probabilistic forecast. Occasionally the model will irrigate before unexpected rain, or wait for rain that doesn't materialise. This is acceptable — a missed irrigation or an extra one rarely harms a lawn.
+- **Initial store value**: On first run, the store starts at 50% capacity. It reaches a realistic value after 3–5 days.
+- **Soil texture**: The capacity parameter must be set correctly for your soil. An incorrect capacity shifts the thresholds but doesn't break the model.
+
+---
+
+## Further reading
+
+- Hargreaves & Samani (1985): "Reference crop evapotranspiration from temperature" — the original paper
+- FAO Irrigation and Drainage Paper 56 (Allen et al., 1998): the standard reference for ET₀ calculation
+- MeteoSwiss OGD documentation: [data.geo.admin.ch](https://data.geo.admin.ch)
