@@ -39,6 +39,13 @@ Number        IrrigationTempMinToday  "Tmin heute [%.0f °C]"           <tempera
     (gIrrigationWeather)
     { channel="http:url:meteoSwissForecast:forecastTodayTempMin" }
 
+// Today's rain — at 05:00 this is mostly "already fallen" mixed with the
+// remaining hours of forecast. Used to catch overnight rain that hasn't
+// reached the measurement CSV yet (which only updates daily).
+Number:Length IrrigationRainToday       "Regen heute [%.1f mm]"         <rain>
+    (gIrrigationWeather)
+    { channel="http:url:meteoSwissForecast:forecastTodayPrecip" }
+
 // Forecast rain tomorrow (for skip-irrigation logic)
 Number:Length IrrigationRainTomorrow    "Regen morgen [%.1f mm]"        <rain>
     (gIrrigationWeather)

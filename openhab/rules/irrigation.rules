@@ -41,6 +41,9 @@ val Number RAIN_TOMORROW_SKIP_MM  =  5.0   // Skip irrigation if this much rain 
 
 val Number RAIN_TOMORROW_MAX_SKIP = 10.0   // Skip if upper rain bound exceeds this [mm]
 
+val Number RAIN_TODAY_SKIP_MM     =  3.0   // Skip if it already rained / will rain today [mm]
+                                            // Catches overnight rain not yet in CSV measurements
+
 val Number ET0_MAX_MM             =  8.0   // Max plausible ET₀ in Switzerland [mm/day]
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -71,6 +74,7 @@ then
     IrrigationRainYesterday.sendCommand(REFRESH)
     IrrigationTempMaxToday.sendCommand(REFRESH)
     IrrigationTempMinToday.sendCommand(REFRESH)
+    IrrigationRainToday.sendCommand(REFRESH)
     IrrigationRainTomorrow.sendCommand(REFRESH)
     IrrigationRainTomorrowMax.sendCommand(REFRESH)
     Thread::sleep(8000)   // give HTTP fetch + Exec script time to complete
@@ -97,15 +101,19 @@ then
 
     var float rainTomorrow    = 0.0
     var float rainTomorrowMax = 0.0
+    var float rainToday       = 0.0
     if (IrrigationRainTomorrow.state != NULL && IrrigationRainTomorrow.state != UNDEF) {
         rainTomorrow = (IrrigationRainTomorrow.state as Number).floatValue
     }
     if (IrrigationRainTomorrowMax.state != NULL && IrrigationRainTomorrowMax.state != UNDEF) {
         rainTomorrowMax = (IrrigationRainTomorrowMax.state as Number).floatValue
     }
+    if (IrrigationRainToday.state != NULL && IrrigationRainToday.state != UNDEF) {
+        rainToday = (IrrigationRainToday.state as Number).floatValue
+    }
 
-    logInfo("Irrigation", "Inputs: rain_yesterday={} mm, Tmax={}°C, Tmin={}°C, rain_tomorrow={} mm (max {} mm)",
-        rainYesterday, tMax, tMin, rainTomorrow, rainTomorrowMax)
+    logInfo("Irrigation", "Inputs: rain_yesterday={} mm, Tmax={}°C, Tmin={}°C, rain_today={} mm, rain_tomorrow={} mm (max {} mm)",
+        rainYesterday, tMax, tMin, rainToday, rainTomorrow, rainTomorrowMax)
 
 
     // ── 2. Load soil store from persistence ────────────────────────────────
@@ -141,8 +149,9 @@ then
 
     // ── 5. Irrigation decision ─────────────────────────────────────────────
 
-    val boolean rainExpectedTomorrow = (rainTomorrow    >= RAIN_TOMORROW_SKIP_MM.floatValue)
-                                    || (rainTomorrowMax >= RAIN_TOMORROW_MAX_SKIP.floatValue)
+    val boolean rainToday_significant = (rainToday        >= RAIN_TODAY_SKIP_MM.floatValue)
+    val boolean rainExpectedTomorrow  = (rainTomorrow    >= RAIN_TOMORROW_SKIP_MM.floatValue)
+                                     || (rainTomorrowMax >= RAIN_TOMORROW_MAX_SKIP.floatValue)
 
     val boolean storeCritical = (store < STORE_CRITICAL_MM.floatValue)
     val boolean storeLow      = (store < STORE_IRRIGATE_MM.floatValue)
@@ -150,13 +159,20 @@ then
     var boolean doIrrigate = false
     var String  reason     = ""
 
-    if (storeCritical) {
+    // Highest priority: rain today (either already fallen overnight, or forecast
+    // for the remaining hours). Watering on wet ground or right before rain
+    // is always wasted water — overrides even the "critical" store level.
+    if (rainToday_significant) {
+        doIrrigate = false
+        reason = String.format("REGEN HEUTE: %.0f mm — Bewässerung sinnlos, Speicher %.0f mm", rainToday, store)
+
+    } else if (storeCritical) {
         doIrrigate = true
-        reason = String.format("KRITISCH: Speicher %.0f mm — bewässern (auch bei Regenprognose)", store)
+        reason = String.format("KRITISCH: Speicher %.0f mm — bewässern (auch bei Regen morgen)", store)
 
     } else if (storeLow && !rainExpectedTomorrow) {
         doIrrigate = true
-        reason = String.format("NIEDRIG: Speicher %.0f mm — bewässern, kein Regen morgen", store)
+        reason = String.format("NIEDRIG: Speicher %.0f mm — bewässern, kein Regen erwartet", store)
 
     } else if (storeLow && rainExpectedTomorrow) {
         doIrrigate = false

@@ -68,24 +68,35 @@ This formula is well-validated for Swiss Mittelland conditions. It underestimate
 ## Decision logic
 
 ```
-Every morning at 06:00:
+Every morning at 05:00:
 
-1. Fetch rain_yesterday from MeteoSwiss station (measured)
-2. Fetch Tmax, Tmin from MeteoSwiss forecast (today)
-3. Fetch rain_tomorrow from MeteoSwiss forecast
+1. Force-refresh all data sources (rain measurements + forecasts)
+2. Fetch yesterday's rain from MeteoSwiss station (measured)
+3. Fetch Tmax, Tmin from MeteoSwiss forecast (today)
+4. Fetch rain_today and rain_tomorrow from MeteoSwiss forecast
 
-4. Calculate ET₀ from Tmax, Tmin
-5. Update store = clamp(store + rain_yesterday − ET₀, 0, capacity)
+5. Calculate ET₀ from Tmax, Tmin
+6. Update store = clamp(store + rain_yesterday − ET₀, 0, capacity)
 
-6. If store < critical AND no rain tomorrow  → IRRIGATE (urgent)
-7. If store < threshold AND no rain tomorrow → IRRIGATE
-8. If store < threshold AND rain tomorrow    → WAIT (let rain top up the store)
-9. If store >= threshold                     → NO IRRIGATION
-
-10. If irrigating: duration = (target − store) / sprinkler_rate × 60 minutes
+Priority-ordered decision:
+7. If rain_today ≥ 3mm                       → SKIP   (already wet / will be)
+8. If store < critical                       → IRRIGATE (urgent, regardless)
+9. If store < threshold AND no rain tomorrow → IRRIGATE
+10. If store < threshold AND rain tomorrow   → SKIP   (let rain top up)
+11. If store >= threshold                    → SKIP
 ```
 
-The "rain tomorrow" check uses both `precipitation` (expected value) and `precipitationMax` (upper bound of forecast uncertainty). This avoids unnecessary irrigation when rain is likely even if not certain.
+### Why "rain today" overrides everything
+
+At 05:00, three rain values are relevant:
+
+- **Yesterday's rain** comes from the station CSV (`rka150d0`). It only covers up to midnight last night.
+- **Today's rain forecast** covers the entire current day — at 05:00, this is partly "already fallen overnight" and partly "remaining hours".
+- **Tomorrow's rain forecast** covers the next day.
+
+If 8 mm fell between 02:00 and 04:30, this is **not yet visible** in yesterday's CSV measurement — but it does appear in `forecast[0].precipitation` (today). Without the today-rain check, the rule would irrigate a freshly-soaked lawn.
+
+The 3 mm threshold for skip is intentionally lower than the 5 mm "tomorrow" threshold. Reason: rain that has *already happened* or is *imminent* is much more certain than a 24h forecast.
 
 ---
 

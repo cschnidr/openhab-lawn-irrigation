@@ -127,6 +127,7 @@ val Number STORE_IRRIGATE_MM      = 18.0   // Irrigate below this
 val Number STORE_CRITICAL_MM      = 10.0   // Critical: irrigate even with rain forecast
 val Number RAIN_TOMORROW_SKIP_MM  =  5.0   // Skip if forecast >= this
 val Number RAIN_TOMORROW_MAX_SKIP = 10.0   // Skip if max forecast >= this
+val Number RAIN_TODAY_SKIP_MM     =  3.0   // Skip if today already has/will have this much
 val Number ET0_MAX_MM             =  8.0   // Cap on daily evapotranspiration
 ```
 
@@ -136,6 +137,7 @@ val Number ET0_MAX_MM             =  8.0   // Cap on daily evapotranspiration
 |-----------|---------------|----------------|
 | `STORE_CAPACITY_MM` | Sandy soil (20–25) | Clay soil (50–60) |
 | `STORE_IRRIGATE_MM` | You want a drier, drought-hardened lawn | Your lawn dries out before the rule triggers |
+| `RAIN_TODAY_SKIP_MM` | You want to skip irrigation even on light rain days | You want to water through light morning drizzle |
 | `RAIN_TOMORROW_SKIP_MM` | You want to be more aggressive (water even with light rain forecast) | You want to be conservative (let any rain do the work) |
 
 The defaults assume **loamy soil, ~40 mm root zone capacity** (typical for Glattal/Mittelland).
