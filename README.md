@@ -2,7 +2,7 @@
 
 A smart "should I irrigate tomorrow?" decision system for openHAB, based on real measured precipitation from MeteoSwiss (SwissMetNet) and a 7-day forecast. Uses a soil moisture balance model — no soil sensor required.
 
-This project does **one thing**: every evening at 21:00, it decides whether to set your existing irrigation trigger switch to ON or OFF. **Your existing setup handles the actual watering** (duration, valves, etc.).
+This project does **one thing**: every morning at 05:00, it decides whether to set your existing irrigation trigger switch to ON or OFF — shortly before your irrigation system starts. **Your existing setup handles the actual watering** (duration, valves, etc.).
 
 ---
 
@@ -15,7 +15,9 @@ This project does **one thing**: every evening at 21:00, it decides whether to s
          │                                  │
          └──────────────┬───────────────────┘
                         ▼
-            [openHAB rule — daily 21:00]
+            [openHAB rule — daily 05:00]
+                        │
+                        │  (refresh data → wait → compute)
                         │
               ┌─────────▼──────────┐
               │ Update soil store: │
@@ -35,8 +37,8 @@ This project does **one thing**: every evening at 21:00, it decides whether to s
               └─────────┬──────────┘
                         ▼
               YOUR existing trigger switch
-              → your existing irrigation system runs
-                next morning for fixed duration
+              → your irrigation system starts shortly after
+                (e.g. 05:30) for its fixed deep-watering duration
 ```
 
 Instead of a naive "did it rain last week?" rule, this model:

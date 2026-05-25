@@ -48,14 +48,32 @@ val Number ET0_MAX_MM             =  8.0   // Max plausible ET₀ in Switzerland
 // =============================================================================
 // Rule: Daily irrigation decision
 // =============================================================================
-// Runs every evening at 21:00. The trigger switch state at this moment
-// determines whether irrigation will run the next morning.
+// Runs every morning at 05:00 — shortly before the user's irrigation system
+// starts at ~05:30. The trigger switch state at the moment your irrigation
+// system reads it determines whether watering happens.
+//
+// Why 05:00 (not the evening before)?
+//   - MeteoSwiss rka150d0 for "yesterday" is published ~02:00 local
+//   - Forecast for "today" / "tomorrow" is freshest in the morning
+//   - Minimal gap between decision and execution → no weather surprises
 // =============================================================================
 rule "Irrigation — Daily Decision"
 when
-    Time cron "0 0 21 ? * * *"
+    Time cron "0 0 5 ? * * *"
 then
     logInfo("Irrigation", "=== Daily irrigation decision started ===")
+
+    // ── 0. Force-refresh data sources, then wait briefly ───────────────────
+    //
+    // Triggers an immediate fetch of the MeteoSwiss CSV and forecast,
+    // so we work with the freshest possible data — not whatever was last
+    // polled hours ago.
+    IrrigationRainYesterday.sendCommand(REFRESH)
+    IrrigationTempMaxToday.sendCommand(REFRESH)
+    IrrigationTempMinToday.sendCommand(REFRESH)
+    IrrigationRainTomorrow.sendCommand(REFRESH)
+    IrrigationRainTomorrowMax.sendCommand(REFRESH)
+    Thread::sleep(8000)   // give HTTP fetch + Exec script time to complete
 
     // ── 1. Read inputs (with safe defaults) ─────────────────────────────────
 

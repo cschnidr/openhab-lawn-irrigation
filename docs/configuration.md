@@ -144,14 +144,24 @@ The defaults assume **loamy soil, ~40 mm root zone capacity** (typical for Glatt
 
 ## Step 6 — When does the rule run?
 
-Default: **daily at 21:00**. The decision is set on the trigger switch and your existing irrigation system reads it the next morning.
+**Default: every morning at 05:00.** Adjust to fit *just before* your irrigation system actually starts watering.
+
+The rule itself force-refreshes the MeteoSwiss data at the start of each run, then waits 8 seconds for the fetch to complete before computing. So you don't need to align the Exec/HTTP poll schedule with the rule — you just need internet connectivity at rule time.
 
 To change the time, edit the cron expression in the rule:
 ```javascript
-Time cron "0 0 21 ? * * *"
-//             ^^
+Time cron "0 0 5 ? * * *"
+//             ^
 //             hour of day (24h format)
 ```
+
+If your irrigation starts at e.g. 06:00, use `"0 30 5 ? * * *"` (05:30) to leave a 30-minute buffer.
+
+### Why morning and not the evening before?
+
+- The MeteoSwiss `rka150d0` value for yesterday is published ~02:00 local
+- The forecast for today/tomorrow is freshest in the morning
+- Minimal gap between decision and execution means no weather surprises
 
 ---
 
