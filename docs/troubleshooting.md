@@ -77,6 +77,23 @@ Verify after restart: the item should have a numeric value (not NULL).
 
 ---
 
+## Lawn gets watered every day even though store should drop slowly
+
+**Symptom:** `IrrigationSoilStore` reaches 0 within a few days and then stays there. The trigger is `ON` every morning.
+
+**Cause:** The decision rule debits the store with ET₀ each day but nothing credits it back after irrigation. So the store decays toward 0 even when the irrigation actually delivered water — and the rule keeps triggering "store critical" forever.
+
+**Fix:** Make sure the refill rule (`Irrigation — Refill store after run`) is in your `irrigation.rules` and that your irrigation block sends `OFF` to `IrrigationTrigger` when it finishes its run. See [configuration.md → Step 4b](configuration.md).
+
+**Verify:** On the day after a run, check the log:
+```
+Irrigation - Soil store refilled to 40.0 mm after irrigation run
+```
+
+If you only see this when the store was already at capacity (because the decision rule sent OFF on a dry, well-supplied day), the guard `if (IrrigationTrigger.state != ON) return` is doing its job — refill only happens when the trigger was actually ON before the OFF arrived.
+
+---
+
 ## Trigger switch is never set
 
 **Check 1:** Does the rule know the correct item name? If you didn't rename your switch to `IrrigationTrigger`, edit the rule to use your actual item name.
