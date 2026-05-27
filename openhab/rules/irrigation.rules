@@ -31,6 +31,12 @@ val Number STORE_CAPACITY_MM      = 40.0   // Soil water capacity [mm]
 
 val Number STORE_INITIAL_MM       = 20.0   // Store value on first run (50% capacity)
 
+val Number STORE_REFILL_TARGET_MM = 40.0   // Store value after a completed irrigation run [mm]
+                                            // Defaults to capacity (lawn fully refilled).
+                                            // Calibrate via cup test: lower this if your run
+                                            // delivers less than capacity (e.g. 30 mm in a 35 mm
+                                            // capacity soil → set 30.0). Must be ≤ STORE_CAPACITY_MM.
+
 val Number STORE_IRRIGATE_MM      = 18.0   // Irrigate when store falls below this [mm]
                                             // ≈ 45% of capacity
 
@@ -205,4 +211,51 @@ then
     }
 
     logInfo("Irrigation", "=== Decision complete ===")
+end
+
+
+// =============================================================================
+// Rule: Refill soil store after irrigation run
+// =============================================================================
+// When the trigger switch is set back to OFF (after the user's irrigation
+// system has finished its run), assume the root zone has been replenished
+// and refill the soil store to STORE_REFILL_TARGET_MM.
+//
+// Why this is needed:
+//   The decision rule only DEBITS the store (rain in, ET₀ out). Without an
+//   explicit refill, the store would drift down to 0 and the rule would
+//   trigger irrigation every single day from then on — independent of how
+//   much water the irrigation actually delivered. The refill closes the loop.
+//
+// How it triggers:
+//   This rule reacts to "received command OFF" on IrrigationTrigger. The
+//   typical pattern is: user's irrigation block (timer, valve sequence)
+//   sets the trigger ON in the morning, runs through, then sets it OFF
+//   when finished. That OFF command is the cue to credit the store.
+//
+//   If your setup uses a different signal (e.g. a separate "irrigation
+//   done" item, a cron schedule N hours after start), adapt the trigger
+//   below accordingly.
+//
+// Calibration:
+//   STORE_REFILL_TARGET_MM defaults to STORE_CAPACITY_MM (full refill).
+//   In practice, professional irrigation rarely saturates a soil all the
+//   way to field capacity. Use the bucket / cup test to measure how many
+//   mm your run actually delivers, and set STORE_REFILL_TARGET_MM to that.
+// =============================================================================
+rule "Irrigation — Refill store after run"
+when
+    Item IrrigationTrigger received command OFF
+then
+    // Guard: only refill when the OFF arrives AFTER an irrigation actually ran.
+    // The decision rule itself sends OFF on dry days — we must not refill then.
+    // Heuristic: only refill if the trigger was ON before this command arrives.
+    if (IrrigationTrigger.state != ON) {
+        return;
+    }
+
+    val float refill = Math.min(STORE_REFILL_TARGET_MM.floatValue,
+                                STORE_CAPACITY_MM.floatValue)
+    IrrigationSoilStore.postUpdate(refill)
+    logInfo("Irrigation", "Soil store refilled to {} mm after irrigation run", refill)
 end

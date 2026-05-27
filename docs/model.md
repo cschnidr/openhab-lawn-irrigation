@@ -36,6 +36,14 @@ Each day, the store is updated:
 store_new = clamp(store_old + rain_yesterday − ET₀_today, 0, CAPACITY)
 ```
 
+After a completed irrigation run, the store is also credited:
+
+```
+store_after_run = min(STORE_REFILL_TARGET_MM, CAPACITY)
+```
+
+Without this refill step the store would only ever decrease (rain in, ET₀ out) — the model would lose track of the water that the irrigation system itself delivered, and the rule would trigger irrigation every day from then on.
+
 ---
 
 ## Evapotranspiration estimation (ET₀)
@@ -87,6 +95,9 @@ Priority-ordered decision:
 9. If store < threshold AND no rain tomorrow → IRRIGATE
 10. If store < threshold AND rain tomorrow   → SKIP   (let rain top up)
 11. If store >= threshold                    → SKIP
+
+After the irrigation run completes (trigger goes back to OFF):
+12. store := min(STORE_REFILL_TARGET_MM, CAPACITY)
 ```
 
 ### Why "rain today" overrides everything

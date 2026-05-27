@@ -131,6 +131,35 @@ Without this, the store resets to 20 mm on every openHAB restart and the model p
 
 ---
 
+## Step 4b — Refill the soil store after irrigation
+
+The decision rule only **debits** the soil store (rain in, ET₀ out). After a real irrigation run, the store must be **credited** back — otherwise it drifts toward 0 and the rule triggers irrigation every single day, regardless of how much water actually fell on the lawn.
+
+This repository ships a separate rule **"Irrigation — Refill store after run"** that reacts to `IrrigationTrigger received command OFF` and posts `STORE_REFILL_TARGET_MM` to `IrrigationSoilStore`.
+
+For this to work, **your irrigation block must send `OFF` to the trigger when it finishes the run.** Most setups already do this. If yours doesn't, either:
+- Add a `sendCommand(IrrigationTrigger, OFF)` at the end of your irrigation block, **or**
+- Edit the refill rule to react to your own "irrigation done" signal.
+
+### Calibrating `STORE_REFILL_TARGET_MM`
+
+The default is `40.0` mm (= `STORE_CAPACITY_MM`, i.e. full refill). In practice, a single irrigation run rarely saturates the soil all the way to field capacity. To calibrate:
+
+1. Place 4–6 straight-walled cups (e.g. tuna cans) randomly on the lawn before a run.
+2. Run a normal irrigation cycle.
+3. Measure the average water depth in the cups in mm.
+4. Set `STORE_REFILL_TARGET_MM` to that value (cap it at `STORE_CAPACITY_MM`).
+
+Example: a 25-minute run delivering 30 mm in cups, on a soil with 40 mm capacity → set `STORE_REFILL_TARGET_MM = 30.0`. The next morning's decision rule will then start at 30 and debit ET₀ from there.
+
+### Why a separate rule and not inline?
+
+Keeping refill logic out of the user's irrigation block means:
+- Users with different watering controls (timers, KNX, Z-Wave, scripts) only need to ensure their setup eventually sends `OFF` to the trigger.
+- The model's "credit" is tied to the trigger lifecycle, not to a specific implementation.
+
+---
+
 ## Step 5 — Tune the irrigation model (optional)
 
 The defaults work for typical Swiss Mittelland conditions. If your soil or climate differs, adjust the values at the top of `openhab/rules/irrigation.rules`:
@@ -138,6 +167,7 @@ The defaults work for typical Swiss Mittelland conditions. If your soil or clima
 ```javascript
 val Number STORE_CAPACITY_MM      = 40.0   // Soil water capacity [mm]
 val Number STORE_INITIAL_MM       = 20.0   // Starting value, first run
+val Number STORE_REFILL_TARGET_MM = 40.0   // Store value after a run (≤ capacity)
 val Number STORE_IRRIGATE_MM      = 18.0   // Irrigate below this
 val Number STORE_CRITICAL_MM      = 10.0   // Critical: irrigate even with rain forecast
 val Number RAIN_TOMORROW_SKIP_MM  =  5.0   // Skip if forecast >= this
@@ -152,6 +182,7 @@ val Number ET0_MAX_MM             =  8.0   // Cap on daily evapotranspiration
 |-----------|---------------|----------------|
 | `STORE_CAPACITY_MM` | Sandy soil (20–25) | Clay soil (50–60) |
 | `STORE_IRRIGATE_MM` | You want a drier, drought-hardened lawn | Your lawn dries out before the rule triggers |
+| `STORE_REFILL_TARGET_MM` | Cup test shows your run delivers less than capacity | Always leave at `STORE_CAPACITY_MM` for full refill |
 | `RAIN_TODAY_SKIP_MM` | You want to skip irrigation even on light rain days | You want to water through light morning drizzle |
 | `RAIN_TOMORROW_SKIP_MM` | You want to be more aggressive (water even with light rain forecast) | You want to be conservative (let any rain do the work) |
 
